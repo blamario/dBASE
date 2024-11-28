@@ -1,0 +1,53 @@
+cabal-version:      3.0
+name:               dBASE
+version:            0.1.0.0
+synopsis:           Parsing and serialization of dBASE files
+-- description:
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Mario Blažević
+maintainer:         blamario@protonmail.com
+-- copyright:
+category:           Database
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+-- extra-source-files:
+
+common warnings
+    ghc-options: -Wall
+
+library
+    import:           warnings
+    exposed-modules:  DBase
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base ^>=4.20.0.0, bytestring >= 0.10 && < 0.13, construct ^>=0.3,
+                      cereal ^>= 0.5, incremental-parser ^>= 0.5, input-parsers ^>= 0.3, rank2classes >=1.0 && <1.6,
+                      cassava ^>= 0.4 || ^>= 0.5, scientific ^>= 0.3, vector >= 0.8 && < 0.14
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+executable dbf2csv
+    import:           warnings
+    main-is:          Main.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:
+        base ^>=4.20.0.0,
+        bytestring, cassava,
+        dBASE
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
+test-suite dBASE-test
+    import:           warnings
+    default-language: Haskell2010
+    -- other-modules:
+    -- other-extensions:
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    build-depends:
+        base ^>=4.20.0.0,
+        dBASE
