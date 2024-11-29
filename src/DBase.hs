@@ -18,7 +18,7 @@ import qualified Data.Char as Char
 import qualified Data.List as List
 import Data.Maybe (listToMaybe)
 import qualified Data.Csv as CSV
-import Data.Scientific (FPFormat(Fixed), formatScientific)
+import Data.Scientific (Scientific, FPFormat(Fixed), formatScientific)
 import Data.Serialize
 import qualified Rank2.TH
 import Text.Parser.Input (InputParsing, ParserInput)
@@ -37,6 +37,7 @@ data DBaseFile f = DBaseFile{
 
 data FileHeader f = FileHeader{
   signature :: f Word8,
+  lastUpdate :: f ByteString,
   recordCount :: f Word32,
   headerLength :: f Word16,
   recordLength :: f Word16,
@@ -48,8 +49,8 @@ data FileHeader f = FileHeader{
   mdxTableFlag :: f Bool,
   codePage :: f Word8,
   reserved3 :: f Word16,
-  fieldDescriptors :: f [FieldDescriptor Identity],
-  fieldProperties :: FieldProperties f}
+  fieldDescriptors :: f [FieldDescriptor Identity]}
+  --fieldProperties :: FieldProperties f}
 
 data FieldDescriptor f = FieldDescriptor{
   fieldName :: f ByteString,
@@ -99,7 +100,7 @@ data FieldType = CharacterType
 data FieldValue = BinaryValue !ByteString
                 | CharacterValue !ByteString
                 | DateValue !ByteString
-                | NumericValue !Rational
+                | NumericValue !Scientific
                 | LogicalValue !(Maybe Bool)
                 | Memo !ByteString
                 | TimestampValue !ByteString
@@ -115,6 +116,9 @@ $(Rank2.TH.deriveAll ''FieldProperties)
 $(Rank2.TH.deriveAll ''FieldDescriptor)
 $(Rank2.TH.deriveAll ''FileHeader)
 
+deriving instance Show (FileHeader Identity)
+deriving instance Show (FieldDescriptor Identity)
+deriving instance Show (FieldProperties Identity)
 deriving instance Show (Record Identity)
 
 
@@ -136,7 +140,7 @@ fieldBS (BinaryValue bs) = bs
 fieldBS (CharacterValue bs) = bs
 fieldBS (DateValue bs) = bs
 fieldBS (TimestampValue bs) = bs
-fieldBS (NumericValue n) = ASCII.pack (formatScientific Fixed Nothing $ fromRational n)
+fieldBS (NumericValue n) = ASCII.pack (formatScientific Fixed Nothing n)
 fieldBS (LongValue n) = ASCII.pack (show n)
 fieldBS (AutoincrementValue n) = ASCII.pack (show n)
 fieldBS (FloatValue n) = ASCII.pack (show n)
@@ -156,6 +160,7 @@ file = mapValue (uncurry DBaseFile) (header &&& records) $
 fileHeader :: Format (Parser ByteString) Maybe ByteString (FileHeader Identity)
 fileHeader = mfix $ \self-> record FileHeader{
   signature = satisfy (`elem` [0x2, 0x3, 0x4, 0x5]) byte,
+  lastUpdate = take 3,
   recordCount = cereal' getWord32le putWord32le,
   headerLength = word16le,
   recordLength = word16le,
@@ -167,7 +172,8 @@ fileHeader = mfix $ \self-> record FileHeader{
   mdxTableFlag = flag,
   codePage = byte,
   reserved3 = cereal,
-  fieldDescriptors = manyTill fieldDescriptor (literal (ByteString.singleton 0xD) <?> "field descriptors terminator"),
+  fieldDescriptors = manyTill fieldDescriptor (literal (ByteString.singleton 0xD) <?> "field descriptors terminator")}
+{-
   fieldProperties = FieldProperties{
     standardPropertyCount = word16le,
     standardPropertiesStart = word16le,
@@ -177,7 +183,7 @@ fileHeader = mfix $ \self-> record FileHeader{
     referentialIntegrityPropertiesStart = word16le,
     dataStart = word16le,
     totalSize = word16le,
-    properties = take (fromIntegral $ totalSize $ fieldProperties self)}}
+    properties = take (fromIntegral $ totalSize $ fieldProperties self)}-}
 
 fieldDescriptor :: Format (Parser ByteString) Maybe ByteString (FieldDescriptor Identity)
 fieldDescriptor = record FieldDescriptor{
@@ -208,7 +214,7 @@ fieldDescriptor = record FieldDescriptor{
 
 tableRecord :: [FieldDescriptor Identity] -> Format (Parser ByteString) Maybe ByteString (Record Identity)
 tableRecord expected = record Record{
-  deleted = True <$ value byte (fromIntegral $ Char.ord '*') <|> True <$ value byte (fromIntegral $ Char.ord ' '),
+  deleted = True <$ value byte (fromIntegral $ Char.ord '*') <|> False <$ value byte (fromIntegral $ Char.ord ' '),
   fields = forF expected fieldValue}
 
 fieldValue :: FieldDescriptor Identity -> Format (Parser ByteString) Maybe ByteString FieldValue
@@ -220,8 +226,12 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
                             else Just $ s <> ASCII.replicate (strLen - ASCII.length s) ' ')
      (take strLen)
   NumberType -> mapMaybeValue
-    (fmap NumericValue . readMaybe . ASCII.unpack)
-    (Just . ASCII.pack . formatScientific Fixed (Just $ fromIntegral dec) . fromRational . \(NumericValue x)-> x)
+    (fmap NumericValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
+    (Just . ASCII.pack . formatScientific Fixed (Just $ fromIntegral dec) . \(NumericValue x)-> x)
+    (take $ fromIntegral len)
+  FloatType -> mapMaybeValue
+    (fmap FloatValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
+    (Just . ASCII.pack . show . \(FloatValue x)-> x)
     (take $ fromIntegral len)
 
 word16le :: Format (Parser ByteString) Maybe ByteString Word16
