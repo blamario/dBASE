@@ -34,6 +34,7 @@ executable dbf2csv
     -- other-extensions:
     build-depends:
         base ^>=4.20.0.0,
+        optparse-applicative >= 0.15 && < 0.19,
         bytestring, cassava,
         dBASE
 
