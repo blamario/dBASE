@@ -9,6 +9,8 @@ main :: IO ()
 main = do
   [path] <- getArgs
   contents <- ByteString.readFile path
-  let Just dbf = DBase.parse contents
+  let dbf = case DBase.parse contents of
+              Left err -> error err
+              Right parsed -> parsed
   ByteString.putStr (CSV.encode $ DBase.csvHeader dbf : DBase.csvRecords dbf)
 

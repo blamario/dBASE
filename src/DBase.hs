@@ -7,6 +7,7 @@ module DBase (
   DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
 
 import Control.Arrow ((&&&))
+import Control.Monad (join)
 import Data.Functor.Identity (Identity(Identity, runIdentity))
 import Data.Word (Word8, Word16, Word32, Word64)
 import Data.ByteString (ByteString)
@@ -21,7 +22,7 @@ import Data.Scientific (FPFormat(Fixed), formatScientific)
 import Data.Serialize
 import qualified Rank2.TH
 import Text.Parser.Input (InputParsing, ParserInput)
-import Text.ParserCombinators.Incremental.LeftBiasedLocal (Parser, completeResults, feed, feedEof)
+import Text.ParserCombinators.Incremental.LeftBiasedLocal (Parser, inspect, feed, feedEof)
 import Text.Read (readMaybe)
 import qualified Data.Vector as Vector
 import Construct
@@ -117,8 +118,9 @@ $(Rank2.TH.deriveAll ''FileHeader)
 deriving instance Show (Record Identity)
 
 
-parse :: Lazy.ByteString -> Maybe (DBaseFile Identity)
-parse input = fmap fst $ listToMaybe $ completeResults $ feedEof $ feed input $ Construct.parse file
+parse :: Lazy.ByteString -> Either String (DBaseFile Identity)
+parse input = fst <$> join (maybe (Left "success with no results") Right . listToMaybe . fst
+                            <$> inspect (feedEof $ feed input $ Construct.parse file))
 
 serialize :: DBaseFile Identity -> Maybe Lazy.ByteString
 serialize = Construct.serialize file
@@ -148,7 +150,7 @@ file = mapValue (uncurry DBaseFile) (header &&& records) $
   (deppair (mapSerialized Lazy.fromStrict Lazy.toStrict fileHeader) $
    \FileHeader{recordCount = Identity n, fieldDescriptors = Identity descriptors}->
      count (fromIntegral n) $ mapSerialized Lazy.fromStrict Lazy.toStrict $ tableRecord descriptors)
-  <* literal (Lazy.singleton 0x1A)
+  <* (literal (Lazy.singleton 0x1A) <?> "EOF marker")
 --  <* eof
 
 fileHeader :: Format (Parser ByteString) Maybe ByteString (FileHeader Identity)
@@ -165,7 +167,7 @@ fileHeader = mfix $ \self-> record FileHeader{
   mdxTableFlag = flag,
   codePage = byte,
   reserved3 = cereal,
-  fieldDescriptors = many fieldDescriptor <* literal (ByteString.singleton 0xD),
+  fieldDescriptors = manyTill fieldDescriptor (literal (ByteString.singleton 0xD) <?> "field descriptors terminator"),
   fieldProperties = FieldProperties{
     standardPropertyCount = word16le,
     standardPropertiesStart = word16le,
@@ -179,7 +181,7 @@ fileHeader = mfix $ \self-> record FileHeader{
 
 fieldDescriptor :: Format (Parser ByteString) Maybe ByteString (FieldDescriptor Identity)
 fieldDescriptor = record FieldDescriptor{
-  fieldName = padded1 (ByteString.replicate 11 0) $ takeWhile (\c-> c >= "\x01" && c < "\x80"),
+  fieldName = padded1 (ByteString.replicate 11 0) (takeWhile (\c-> c >= "\x01" && c < "\x80")) <?> "field name",
   fieldType = CharacterType <$ literal "C"
               <|> NumberType <$ literal "N"
               <|> LogicalType <$ literal "L"
@@ -195,9 +197,10 @@ fieldDescriptor = record FieldDescriptor{
               <|> LongType <$ literal "I"
               <|> AutoincrementType <$ literal "+"
               <|> VarCharType <$ literal "V"
-              <|> TimestampType <$ literal "@",
-  fieldLength = literal "\0\0\0\0" *> byte,
-  fieldDecimals = satisfy (<= 15) byte <* literal "\0\0",
+              <|> TimestampType <$ literal "@"
+              <?> "field type",
+  fieldLength = literal "\0\0\0\0" *> byte <?> "field length",
+  fieldDecimals = satisfy (<= 15) byte <* literal "\0\0" <?> "field decimals",
   workAreaID = byte <* literal "\0\0",
   setFieldsFlag = flag <* literal (ByteString.replicate 7 0),
   mdxFieldFlag = flag}
