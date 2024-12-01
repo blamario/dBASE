@@ -2,7 +2,7 @@
 
 module DBase (
   -- * Functions
-  DBase.parse, DBase.serialize, csvHeader, csvRecords,
+  DBase.parse, DBase.serialize, csvHeader, csvRecords, headerFromCsv, recordFromCSV,
   -- * Types
   DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
 
@@ -18,7 +18,7 @@ import qualified Data.Char as Char
 import qualified Data.List as List
 import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Csv as CSV
-import Data.Scientific (Scientific, FPFormat(Fixed), formatScientific)
+import Data.Scientific (Scientific, FPFormat(Fixed), formatScientific, isInteger)
 import Data.Serialize
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -28,6 +28,7 @@ import qualified Rank2.TH
 import Text.Parser.Input (InputParsing, ParserInput)
 import Text.ParserCombinators.Incremental.LeftBiasedLocal (Parser, inspect, feed, feedEof)
 import Text.Read (readMaybe)
+import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import Construct
 import Construct.Classes (AlternativeFail)
@@ -139,11 +140,11 @@ csvHeader = Vector.fromList . map (runIdentity . fieldName) . runIdentity . fiel
 csvRecords :: DBaseFile Identity -> [CSV.Record]
 csvRecords = map (Vector.fromList . map fieldBS . runIdentity . fields) . filter (not . runIdentity . deleted) . records
 
-headerFromCsv :: CSV.Header -> Calendar.Day -> [CSV.Record] -> Either String (FileHeader Identity)
+headerFromCsv :: CSV.Header -> Calendar.Day -> Vector CSV.Record -> Either String (FileHeader Identity)
 headerFromCsv hdr updated rs = fixLength <$> Rank2.traverse (Identity <$>) FileHeader{
   signature = Right 0x3,
   lastUpdate = encodeDate updated,
-  recordCount = Right (fromIntegral $ length rs),
+  recordCount = Right (fromIntegral $ Vector.length rs),
   headerLength = Right 0,
   recordLength = succ . sum . map (fromIntegral . runIdentity . fieldLength) <$> descriptors,
   reserved1 = Right 0,
@@ -159,12 +160,29 @@ headerFromCsv hdr updated rs = fixLength <$> Rank2.traverse (Identity <$>) FileH
                                                 $ Construct.serialize fileHeader h}
         descriptors = descriptorsFromCsv hdr rs
 
-descriptorsFromCsv :: CSV.Header -> [CSV.Record] -> Either String [FieldDescriptor Identity]
+recordFromCSV :: FileHeader Identity -> CSV.Record -> Either String (Record Identity)
+recordFromCSV hdr r =
+  fmap (Record (Identity False) . Identity) $
+  sequenceA $
+  zipWith (fieldFromCSV . runIdentity . fieldType) (runIdentity $ fieldDescriptors hdr) (Vector.toList r)
+
+fieldFromCSV :: FieldType -> ByteString -> Either String FieldValue
+fieldFromCSV BinaryType v = Right $ BinaryValue v
+fieldFromCSV CharacterType v = Right $ CharacterValue v
+fieldFromCSV NumberType v =
+  maybe (Left ("Bad number " <> show v)) (Right . NumericValue) $ readMaybe $ ASCII.unpack $ ASCII.dropWhile (== ' ') v
+fieldFromCSV LogicalType v
+  | v == "?" = Right $ LogicalValue Nothing
+  | v `elem` ["f", "F", "n", "N"] = Right $ LogicalValue (Just False)
+  | v `elem` ["t", "T", "y", "Y"] = Right $ LogicalValue (Just True)
+fieldFromCSV DateType v = Right $ DateValue $ ASCII.filter (/= '-') v
+
+descriptorsFromCsv :: CSV.Header -> Vector CSV.Record -> Either String [FieldDescriptor Identity]
 descriptorsFromCsv hdr rs
   | length columns /= length hdr = Left ("Number of columns (" <> show (length columns) <>
                                          ") doesn't match with the header (" <> shows (length hdr) ")")
   | otherwise = sequence $ zipWith fieldDescriptorFromCsv (Vector.toList hdr) columns
-  where columns = List.transpose (Vector.toList <$> rs)
+  where columns = List.transpose (Vector.toList <$> Vector.toList rs)
 
 fieldDescriptorFromCsv :: ByteString -> [ByteString] -> Either String (FieldDescriptor Identity)
 fieldDescriptorFromCsv name values = typedFieldDescriptorFromCsv name (inferType values) values

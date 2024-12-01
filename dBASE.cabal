@@ -42,6 +42,20 @@ executable dbf2csv
     hs-source-dirs:   app
     default-language: Haskell2010
 
+executable csv2dbf
+    import:           warnings
+    main-is:          FromCSV.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:
+        base ^>=4.20.0.0,
+        optparse-applicative >= 0.15 && < 0.19,
+        bytestring, cassava, time,
+        dBASE
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
 test-suite dBASE-test
     import:           warnings
     default-language: Haskell2010
