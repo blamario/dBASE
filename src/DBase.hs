@@ -138,7 +138,7 @@ csvHeader :: DBaseFile Identity -> CSV.Header
 csvHeader = Vector.fromList . map (runIdentity . fieldName) . runIdentity . fieldDescriptors . header
 
 csvRecords :: DBaseFile Identity -> [CSV.Record]
-csvRecords = map (Vector.fromList . map fieldBS . runIdentity . fields) . filter (not . runIdentity . deleted) . records
+csvRecords = map (Vector.fromList . map csvField . runIdentity . fields) . filter (not . runIdentity . deleted) . records
 
 headerFromCsv :: CSV.Header -> Calendar.Day -> Vector CSV.Record -> Either String (FileHeader Identity)
 headerFromCsv hdr updated rs = fixLength <$> Rank2.traverse (Identity <$>) FileHeader{
@@ -264,19 +264,19 @@ encodeDate date
   = Right $ ByteString.pack $ [fromIntegral $ year - 1900, fromIntegral month, fromIntegral day]
   | otherwise = Left "update year out of range"
 
-fieldBS :: FieldValue -> ByteString
-fieldBS (BinaryValue bs) = bs
-fieldBS (CharacterValue bs) = bs
-fieldBS (DateValue bs) = bs
-fieldBS (TimestampValue bs) = bs
-fieldBS (NumericValue n) = ASCII.pack (formatScientific Fixed (if isInteger n then Just 0 else Nothing) n)
-fieldBS (LongValue n) = ASCII.pack (show n)
-fieldBS (AutoincrementValue n) = ASCII.pack (show n)
-fieldBS (FloatValue n) = ASCII.pack (show n)
-fieldBS (DoubleValue n) = ASCII.pack (show n)
-fieldBS (LogicalValue Nothing) = "?"
-fieldBS (LogicalValue (Just False)) = "f"
-fieldBS (LogicalValue (Just True)) = "t"
+csvField :: FieldValue -> ByteString
+csvField (BinaryValue bs) = bs
+csvField (CharacterValue bs) = bs
+csvField (DateValue bs) = bs
+csvField (TimestampValue bs) = bs
+csvField (NumericValue n) = ASCII.pack (formatScientific Fixed (if isInteger n then Just 0 else Nothing) n)
+csvField (LongValue n) = ASCII.pack (show n)
+csvField (AutoincrementValue n) = ASCII.pack (show n)
+csvField (FloatValue n) = ASCII.pack (show n)
+csvField (DoubleValue n) = ASCII.pack (show n)
+csvField (LogicalValue Nothing) = "?"
+csvField (LogicalValue (Just False)) = "f"
+csvField (LogicalValue (Just True)) = "t"
 
 file :: Format (Parser Lazy.ByteString) Maybe Lazy.ByteString (DBaseFile Identity)
 file = mapValue (uncurry DBaseFile) (header &&& records) $
