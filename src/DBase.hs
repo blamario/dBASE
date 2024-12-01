@@ -2,7 +2,7 @@
 
 module DBase (
   -- * Functions
-  DBase.parse, DBase.serialize, csvHeader, csvRecords, headerFromCsv, recordFromCSV,
+  DBase.parse, DBase.serialize, project, csvHeader, csvRecords, headerFromCsv, recordFromCSV,
   -- * Types
   DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
 
@@ -16,7 +16,7 @@ import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Char8 as ASCII
 import qualified Data.Char as Char
 import qualified Data.List as List
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Csv as CSV
 import Data.Scientific (Scientific, FPFormat(Fixed), formatScientific, isInteger)
 import Data.Serialize
@@ -121,6 +121,7 @@ $(Rank2.TH.deriveAll ''FieldProperties)
 $(Rank2.TH.deriveAll ''FieldDescriptor)
 $(Rank2.TH.deriveAll ''FileHeader)
 
+deriving instance Show (DBaseFile Identity)
 deriving instance Show (FileHeader Identity)
 deriving instance Show (FieldDescriptor Identity)
 deriving instance Show (FieldProperties Identity)
@@ -134,6 +135,15 @@ parse input = fst <$> join (maybe (Left "success with no results") Right . listT
 serialize :: DBaseFile Identity -> Maybe Lazy.ByteString
 serialize = Construct.serialize file
 
+-- | Project the subset of columns (i.e. filter the columns) from the dBASE file
+project :: (ByteString -> Bool) -> DBaseFile Identity -> DBaseFile Identity
+project pred DBaseFile{header = hdr@FileHeader{fieldDescriptors = Identity fields}, records = recs} =
+  DBaseFile{header = fixHeaderLength hdr{fieldDescriptors = Identity $ projectList fields},
+            records = map projectRecord recs}
+  where projectRecord r@Record{fields = Identity values} = r{fields = Identity $ projectList values}
+        projectList = mapMaybe (\(keep, x)-> if keep then Just x else Nothing) . zip keeps
+        keeps = pred . runIdentity . fieldName <$> fields
+
 csvHeader :: DBaseFile Identity -> CSV.Header
 csvHeader = Vector.fromList . map (runIdentity . fieldName) . runIdentity . fieldDescriptors . header
 
@@ -141,7 +151,7 @@ csvRecords :: DBaseFile Identity -> [CSV.Record]
 csvRecords = map (Vector.fromList . map csvField . runIdentity . fields) . filter (not . runIdentity . deleted) . records
 
 headerFromCsv :: CSV.Header -> Calendar.Day -> Vector CSV.Record -> Either String (FileHeader Identity)
-headerFromCsv hdr updated rs = fixLength <$> Rank2.traverse (Identity <$>) FileHeader{
+headerFromCsv hdr updated rs = fixHeaderLength <$> Rank2.traverse (Identity <$>) FileHeader{
   signature = Right 0x3,
   lastUpdate = encodeDate updated,
   recordCount = Right (fromIntegral $ Vector.length rs),
@@ -156,9 +166,11 @@ headerFromCsv hdr updated rs = fixLength <$> Rank2.traverse (Identity <$>) FileH
   codePage = Right 1,
   reserved3 = Right 0,
   fieldDescriptors = descriptors}
-  where fixLength h = h{headerLength = Identity $ fromIntegral $ maybe 0 ByteString.length
-                                                $ Construct.serialize fileHeader h}
-        descriptors = descriptorsFromCsv hdr rs
+  where descriptors = descriptorsFromCsv hdr rs
+
+fixHeaderLength :: FileHeader Identity -> FileHeader Identity
+fixHeaderLength h = h{headerLength = Identity $ fromIntegral $ maybe 0 ByteString.length
+                                              $ Construct.serialize fileHeader h}
 
 recordFromCSV :: FileHeader Identity -> CSV.Record -> Either String (Record Identity)
 recordFromCSV hdr r =
