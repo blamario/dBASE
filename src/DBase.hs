@@ -16,10 +16,14 @@ import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Char8 as ASCII
 import qualified Data.Char as Char
 import qualified Data.List as List
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Csv as CSV
 import Data.Scientific (Scientific, FPFormat(Fixed), formatScientific)
 import Data.Serialize
+import Data.Set (Set)
+import qualified Data.Set as Set
+import qualified Data.Time.Calendar as Calendar
+import qualified Rank2
 import qualified Rank2.TH
 import Text.Parser.Input (InputParsing, ParserInput)
 import Text.ParserCombinators.Incremental.LeftBiasedLocal (Parser, inspect, feed, feedEof)
@@ -95,7 +99,7 @@ data FieldType = CharacterType
                | AutoincrementType
                | VarCharType
                | TimestampType
-               deriving (Eq, Show)
+               deriving (Bounded, Eq, Enum, Ord, Show)
 
 data FieldValue = BinaryValue !ByteString
                 | CharacterValue !ByteString
@@ -135,17 +139,124 @@ csvHeader = Vector.fromList . map (runIdentity . fieldName) . runIdentity . fiel
 csvRecords :: DBaseFile Identity -> [CSV.Record]
 csvRecords = map (Vector.fromList . map fieldBS . runIdentity . fields) . filter (not . runIdentity . deleted) . records
 
+headerFromCsv :: CSV.Header -> Calendar.Day -> [CSV.Record] -> Either String (FileHeader Identity)
+headerFromCsv hdr updated rs = fixLength <$> Rank2.traverse (Identity <$>) FileHeader{
+  signature = Right 0x3,
+  lastUpdate = encodeDate updated,
+  recordCount = Right (fromIntegral $ length rs),
+  headerLength = Right 0,
+  recordLength = succ . sum . map (fromIntegral . runIdentity . fieldLength) <$> descriptors,
+  reserved1 = Right 0,
+  incompleteTransaction = Right False,
+  encrypted = Right False,
+  freeRecordThread = Right 0,
+  reserved2 = Right 0,
+  mdxTableFlag = Right False,
+  codePage = Right 1,
+  reserved3 = Right 0,
+  fieldDescriptors = descriptors}
+  where fixLength h = h{headerLength = Identity $ fromIntegral $ maybe 0 ByteString.length
+                                                $ Construct.serialize fileHeader h}
+        descriptors = descriptorsFromCsv hdr rs
+
+descriptorsFromCsv :: CSV.Header -> [CSV.Record] -> Either String [FieldDescriptor Identity]
+descriptorsFromCsv hdr rs
+  | length columns /= length hdr = Left ("Number of columns (" <> show (length columns) <>
+                                         ") doesn't match with the header (" <> shows (length hdr) ")")
+  | otherwise = sequence $ zipWith fieldDescriptorFromCsv (Vector.toList hdr) columns
+  where columns = List.transpose (Vector.toList <$> rs)
+
+fieldDescriptorFromCsv :: ByteString -> [ByteString] -> Either String (FieldDescriptor Identity)
+fieldDescriptorFromCsv name values = typedFieldDescriptorFromCsv name (inferType values) values
+
+inferType :: [ByteString] -> FieldType
+inferType values = head $ filter (`Set.member` foldr Set.intersection allTypes possibleTypeSets) typesByPreference
+  where typesByPreference = [LogicalType, DateType, NumberType, CharacterType, MemoType,
+                             FloatType, LongType, DoubleType, BinaryType]
+        allTypes = Set.fromList [minBound .. maxBound]
+        possibleTypeSets = possibleTypeSet <$> values
+
+possibleTypeSet :: ByteString -> Set FieldType
+possibleTypeSet value = Set.fromList $ concat [
+  [CharacterType | ASCII.all Char.isAscii value],
+  [LogicalType | value `elem` ["?", "f", "t", "F", "T", "y", "n", "Y", "N"]],
+  [DateType | ByteString.length value == 8, ASCII.all Char.isDigit value,
+              let monthDay = ByteString.drop 4 value, monthDay >= "0101", monthDay <= "1231",
+              let day = ByteString.drop 2 monthDay, day <= "31"],
+  [NumberType | let trimmed = ASCII.dropWhile (== ' ') value;
+                    absolute = fromMaybe trimmed $ ASCII.stripPrefix "-" trimmed;
+                    parts = ASCII.split '.' absolute,
+                absolute /= "",
+                ByteString.length trimmed < 18,
+                length parts < 3, all (ASCII.all Char.isDigit) parts],
+  [LongType | let trimmed = ASCII.dropWhile (== ' ') value;
+                  absolute = fromMaybe trimmed $ ASCII.stripPrefix "-" trimmed,
+              ASCII.all Char.isDigit absolute, absolute <= "2147483647"],
+  [BinaryType, MemoType]]
+
+typedFieldDescriptorFromCsv :: ByteString -> FieldType -> [ByteString] -> Either String (FieldDescriptor Identity)
+typedFieldDescriptorFromCsv name ty values = Rank2.traverse (Identity <$>) FieldDescriptor{
+  fieldName = if ByteString.length name < 11 then Right name else Left ("Field name too long: " <> show name),
+  fieldType = Right ty,
+  fieldLength = maxFieldLength ty values,
+  fieldDecimals = maxFieldDecimals ty values,
+  workAreaID = Right 1,
+  setFieldsFlag = Right False,
+  mdxFieldFlag = Right False}
+
+maxFieldLength :: FieldType -> [ByteString] -> Either String Word8
+maxFieldLength CharacterType values
+  | width < 0xFFFF = Right (fromIntegral $ width `mod` 256)
+  | otherwise = Left ("Character field width " <> show width)
+  where width = maximum (ByteString.length <$> values)
+maxFieldLength NumberType values
+  | width < 18 = Right $ fromIntegral width
+  | otherwise = Left ("Number field width " <> show width)
+  where width = maximum (ByteString.length <$> values)
+maxFieldLength LogicalType _ = Right 1
+maxFieldLength DateType _ = Right 8
+maxFieldLength MemoType _ = Right 10
+maxFieldLength FloatType _ = Right 20
+maxFieldLength DoubleType _ = Right 8
+maxFieldLength DateTimeType _ = Right 8
+maxFieldLength LongType _ = Right 4
+maxFieldLength AutoincrementType _ = Right 4
+maxFieldLength TimestampType _ = Right 8
+maxFieldLength ty _ = Left ("Don't know the field length for " <> show ty)
+
+maxFieldDecimals :: FieldType -> [ByteString] -> Either String Word8
+maxFieldDecimals CharacterType values
+  | width < 0xFFFF = Right (fromIntegral $ width `div` 256)
+  | otherwise = Left ("Character field width " <> show width)
+  where width = maximum (ByteString.length <$> values)
+maxFieldDecimals NumberType values
+  | Left err <- prec = Left err
+  | prec < Right 16 = fromIntegral <$> prec
+  | otherwise = Left ("Number field precision " <> foldMap show prec)
+  where prec = maximum <$> traverse decimals values
+        decimals n = case ASCII.split '.' $ ASCII.dropWhileEnd (== ' ') n of
+                       [_whole, fraction] -> Right $ ByteString.length fraction
+                       [_whole] -> Right 0
+                       [] -> Right 0
+                       _ -> Left ("More than one decimal point in number " <> show n)
+
+encodeDate :: Calendar.Day -> Either String ByteString
+encodeDate date
+  | let (year, month, day) = Calendar.toGregorian date, year >= 1900 && year < 2156
+  = Right $ ByteString.pack $ [fromIntegral $ year - 1900, fromIntegral month, fromIntegral day]
+  | otherwise = Left "update year out of range"
+
 fieldBS :: FieldValue -> ByteString
 fieldBS (BinaryValue bs) = bs
 fieldBS (CharacterValue bs) = bs
 fieldBS (DateValue bs) = bs
 fieldBS (TimestampValue bs) = bs
-fieldBS (NumericValue n) = ASCII.pack (formatScientific Fixed Nothing n)
+fieldBS (NumericValue n) = ASCII.pack (formatScientific Fixed (if isInteger n then Just 0 else Nothing) n)
 fieldBS (LongValue n) = ASCII.pack (show n)
 fieldBS (AutoincrementValue n) = ASCII.pack (show n)
 fieldBS (FloatValue n) = ASCII.pack (show n)
 fieldBS (DoubleValue n) = ASCII.pack (show n)
-fieldBS (LogicalValue Nothing) = mempty
+fieldBS (LogicalValue Nothing) = "?"
 fieldBS (LogicalValue (Just False)) = "f"
 fieldBS (LogicalValue (Just True)) = "t"
 
@@ -223,16 +334,22 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
                   -> mapMaybeValue
      (Just . CharacterValue . ASCII.dropWhileEnd (== ' '))
      (\(CharacterValue s)-> if ByteString.length s > strLen then Nothing
-                            else Just $ s <> ASCII.replicate (strLen - ASCII.length s) ' ')
+                            else Just $ s <> padding strLen s)
      (take strLen)
   NumberType -> mapMaybeValue
     (fmap NumericValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
-    (Just . ASCII.pack . formatScientific Fixed (Just $ fromIntegral dec) . \(NumericValue x)-> x)
+    (Just . (\s-> padding (fromIntegral len) s <> s) . trimInsignificantZeros dec . ASCII.pack
+     . formatScientific Fixed (Just $ fromIntegral dec) . \(NumericValue x)-> x)
     (take $ fromIntegral len)
   FloatType -> mapMaybeValue
     (fmap FloatValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
     (Just . ASCII.pack . show . \(FloatValue x)-> x)
     (take $ fromIntegral len)
+  where trimInsignificantZeros 0 = id
+        trimInsignificantZeros _ = ASCII.dropWhileEnd (== '.') . ASCII.dropWhileEnd (== '0')
+
+padding :: Int -> ByteString -> ByteString
+padding targetLength s = ASCII.replicate (targetLength - ByteString.length s) ' '
 
 word16le :: Format (Parser ByteString) Maybe ByteString Word16
 word16le = cereal' getWord16le putWord16le
