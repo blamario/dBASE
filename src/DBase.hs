@@ -2,7 +2,7 @@
 
 module DBase (
   -- * Functions
-  DBase.parse, DBase.serialize, project, csvHeader, csvRecords, headerFromCsv, recordFromCSV, DBase.zipWithM, encodeDate,
+  DBase.parse, DBase.serialize, project, csvHeader, csvRecords, headerFromCsv, recordFromCSV, DBase.zipWithM,
   -- * Types
   DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
 
@@ -42,7 +42,7 @@ data DBaseFile f = DBaseFile{
 
 data FileHeader f = FileHeader{
   signature :: f Word8,
-  lastUpdate :: f ByteString,
+  lastUpdate :: f Calendar.Day,
   recordCount :: f Word32,
   headerLength :: f Word16,
   recordLength :: f Word16,
@@ -160,7 +160,7 @@ csvRecords = map (Vector.fromList . map csvField . runIdentity . fields) . filte
 headerFromCsv :: CSV.Header -> Calendar.Day -> Vector CSV.Record -> Either String (FileHeader Identity)
 headerFromCsv hdr updated rs = fixHeaderLength <$> Rank2.traverse (Identity <$>) FileHeader{
   signature = Right 0x3,
-  lastUpdate = encodeDate updated,
+  lastUpdate = Right updated,
   recordCount = Right (fromIntegral $ Vector.length rs),
   headerLength = Right 0,
   recordLength = succ . sum . map (fromIntegral . runIdentity . fieldLength) <$> descriptors,
@@ -277,12 +277,6 @@ maxFieldDecimals NumberType values
                        [] -> Right 0
                        _ -> Left ("More than one decimal point in number " <> show n)
 
-encodeDate :: Calendar.Day -> Either String ByteString
-encodeDate date
-  | let (year, month, day) = Calendar.toGregorian date, year >= 1900 && year < 2156
-  = Right $ ByteString.pack $ [fromIntegral $ year - 1900, fromIntegral month, fromIntegral day]
-  | otherwise = Left "update year out of range"
-
 csvField :: FieldValue -> ByteString
 csvField (BinaryValue bs) = bs
 csvField (CharacterValue bs) = bs
@@ -308,7 +302,7 @@ file = mapValue (uncurry DBaseFile) (header &&& records) $
 fileHeader :: Format (Parser ByteString) Maybe ByteString (FileHeader Identity)
 fileHeader = mfix $ \self-> record FileHeader{
   signature = satisfy (`elem` [0x2, 0x3, 0x4, 0x5]) byte,
-  lastUpdate = take 3,
+  lastUpdate = mapMaybeValue decodeDate encodeDate $ take 3,
   recordCount = cereal' getWord32le putWord32le,
   headerLength = word16le,
   recordLength = word16le,
@@ -332,6 +326,17 @@ fileHeader = mfix $ \self-> record FileHeader{
     dataStart = word16le,
     totalSize = word16le,
     properties = take (fromIntegral $ totalSize $ fieldProperties self)}-}
+
+decodeDate :: ByteString -> Maybe Calendar.Day
+decodeDate bs = case ByteString.unpack bs of
+  [y, m, d] -> Calendar.fromGregorianValid (1900 + fromIntegral y) (fromIntegral m) (fromIntegral d)
+  _ -> Nothing
+
+encodeDate :: Calendar.Day -> Maybe ByteString
+encodeDate date
+  | let (year, month, day) = Calendar.toGregorian date, year >= 1900 && year < 2156
+  = Just $ ByteString.pack $ [fromIntegral $ year - 1900, fromIntegral month, fromIntegral day]
+  | otherwise = Nothing
 
 fieldDescriptor :: Format (Parser ByteString) Maybe ByteString (FieldDescriptor Identity)
 fieldDescriptor = record FieldDescriptor{

@@ -8,7 +8,7 @@ import Data.List.NonEmpty (NonEmpty, some1)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Lazy as ByteString
 import Data.Time.Clock (getCurrentTime, utctDay)
-import DBase (parse, serialize, zipWithM, encodeDate, FileHeader(..), Record(..))
+import DBase (parse, serialize, zipWithM, FileHeader(..), Record(..))
 import Options.Applicative (Parser, metavar)
 import qualified Options.Applicative as OptsAp
 
@@ -21,7 +21,7 @@ main :: IO ()
 main = do
   paths <- OptsAp.execParser $ OptsAp.info optionsParser $ OptsAp.progDesc "Zip together DBF files with equal numbers of records"
   contents <- traverse ByteString.readFile paths
-  Right today <- encodeDate . utctDay <$> getCurrentTime
+  today <- utctDay <$> getCurrentTime
   let dbfs = case traverse DBase.parse contents of
                Left err -> error err
                Right parsed -> parsed
