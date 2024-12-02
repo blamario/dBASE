@@ -1,3 +1,5 @@
+-- | Convert a DBF file to CSV
+
 module Main where
 
 import Control.Applicative ((<**>), optional)

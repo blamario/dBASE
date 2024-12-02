@@ -1,4 +1,4 @@
-{-# LANGUAGE Haskell2010, TupleSections #-}
+-- | Zip together .dbf files with equal numbers of records
 module Main where
 
 import Control.Applicative ((<**>))

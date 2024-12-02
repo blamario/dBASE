@@ -1,8 +1,15 @@
+-- | Parsing, conversion, manipulation, and serialization of dBASE (.dbf) files.
+--
+-- The data types used for representing the DBF file structure in memory rely on the Higher-Kinded Data pattern.
 {-# LANGUAGE FlexibleInstances, OverloadedStrings, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TypeOperators #-}
 
 module DBase (
-  -- * Functions
-  DBase.parse, DBase.serialize, project, csvHeader, csvRecords, headerFromCsv, recordFromCSV, DBase.zipWithM,
+  -- * Parsing and serialization
+  DBase.parse, DBase.serialize,
+  -- * Manipulation
+  project, DBase.zipWithM,
+  -- * Conversion from and to CSV
+  csvHeader, csvRecords, headerFromCsv, recordFromCSV,
   -- * Types
   DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
 
@@ -36,10 +43,12 @@ import Construct.Classes (AlternativeFail)
 import Prelude hiding ((*>), (<*), (<$), take, takeWhile)
 
 
+-- | Data type representing a DBF file
 data DBaseFile f = DBaseFile{
   header :: FileHeader f,
   records :: [Record f]}
 
+-- | DBF file header representation
 data FileHeader f = FileHeader{
   signature :: f Word8,
   lastUpdate :: f Calendar.Day,
@@ -57,6 +66,7 @@ data FileHeader f = FileHeader{
   fieldDescriptors :: f [FieldDescriptor Identity]}
   --fieldProperties :: FieldProperties f}
 
+-- | A single field descriptor inside a DBF file header
 data FieldDescriptor f = FieldDescriptor{
   fieldName :: f ByteString,
   fieldType :: f FieldType,
@@ -69,6 +79,7 @@ data FieldDescriptor f = FieldDescriptor{
   setFieldsFlag :: f Bool,
   mdxFieldFlag :: f Bool}
 
+-- | Field properties inside a DBF file header, unused
 data FieldProperties f = FieldProperties{
   standardPropertyCount :: f Word16,
   standardPropertiesStart :: f Word16,
@@ -80,10 +91,12 @@ data FieldProperties f = FieldProperties{
   totalSize :: f Word16,
   properties :: f ByteString}
 
+-- | Representation of a single record inside a DBF file
 data Record f = Record{
   deleted :: f Bool,
   fields :: f [FieldValue]}
 
+-- | Possible record field types
 data FieldType = CharacterType
                | NumberType
                | LogicalType
@@ -102,6 +115,7 @@ data FieldType = CharacterType
                | TimestampType
                deriving (Bounded, Eq, Enum, Ord, Show)
 
+-- | Semantic domain of all possible field values
 data FieldValue = BinaryValue !ByteString
                 | CharacterValue !ByteString
                 | DateValue !ByteString
@@ -128,10 +142,12 @@ deriving instance Show (FieldProperties Identity)
 deriving instance Show (Record Identity)
 
 
+-- | Parse the contents of a .dbf file, in case of failure return a @Left errorMessage@
 parse :: Lazy.ByteString -> Either String (DBaseFile Identity)
 parse input = fst <$> join (maybe (Left "success with no results") Right . listToMaybe . fst
                             <$> inspect (feedEof $ feed input $ Construct.parse file))
 
+-- | Serialize the structure of a .dbf file, in case of failure return a @Left errorMessage@
 serialize :: DBaseFile Identity -> Maybe Lazy.ByteString
 serialize = Construct.serialize file
 
@@ -144,6 +160,8 @@ project pred DBaseFile{header = hdr@FileHeader{fieldDescriptors = Identity field
         projectList = mapMaybe (\(keep, x)-> if keep then Just x else Nothing) . zip keeps
         keeps = pred . runIdentity . fieldName <$> fields
 
+-- | Zip together multiple .dbf file structures. This is /not/ a relational table join but a simple order-preserving
+-- 'zip', beware!
 zipWithM :: Applicative m
          => (FileHeader Identity -> FileHeader Identity -> m (FileHeader Identity))
          -> (Record Identity -> Record Identity -> m (Record Identity))
@@ -151,12 +169,15 @@ zipWithM :: Applicative m
 zipWithM fh fr DBaseFile{header = h1, records = rs1} DBaseFile{header = h2, records = rs2} =
   DBaseFile . fixHeaderLength <$> fh h1 h2 <*> Control.Monad.zipWithM fr rs1 rs2
 
+-- | Convert a .dbf file header into a CSV header
 csvHeader :: DBaseFile Identity -> CSV.Header
 csvHeader = Vector.fromList . map (runIdentity . fieldName) . runIdentity . fieldDescriptors . header
 
+-- | Convert all non-deleted .dbf file records into a list of CSV records
 csvRecords :: DBaseFile Identity -> [CSV.Record]
 csvRecords = map (Vector.fromList . map csvField . runIdentity . fields) . filter (not . runIdentity . deleted) . records
 
+-- | Convert CSV into a .dbf file header, given the date of the last .dbf update
 headerFromCsv :: CSV.Header -> Calendar.Day -> Vector CSV.Record -> Either String (FileHeader Identity)
 headerFromCsv hdr updated rs = fixHeaderLength <$> Rank2.traverse (Identity <$>) FileHeader{
   signature = Right 0x3,
@@ -175,16 +196,19 @@ headerFromCsv hdr updated rs = fixHeaderLength <$> Rank2.traverse (Identity <$>)
   fieldDescriptors = descriptors}
   where descriptors = descriptorsFromCsv hdr rs
 
+-- | Fix the value of the 'headerLength' field in the given .dbf header
 fixHeaderLength :: FileHeader Identity -> FileHeader Identity
 fixHeaderLength h = h{headerLength = Identity $ fromIntegral $ maybe 0 ByteString.length
                                               $ Construct.serialize fileHeader h}
 
+-- | Given a .dbf header, convert a single CSV record to a .dbf record conforming to the header
 recordFromCSV :: FileHeader Identity -> CSV.Record -> Either String (Record Identity)
 recordFromCSV hdr r =
   fmap (Record (Identity False) . Identity) $
   sequenceA $
   zipWith (fieldFromCSV . runIdentity . fieldType) (runIdentity $ fieldDescriptors hdr) (Vector.toList r)
 
+-- | Convert a single CSV field value to a .dbf value of the given type if possible
 fieldFromCSV :: FieldType -> ByteString -> Either String FieldValue
 fieldFromCSV BinaryType v = Right $ BinaryValue v
 fieldFromCSV CharacterType v = Right $ CharacterValue v
@@ -196,6 +220,7 @@ fieldFromCSV LogicalType v
   | v `elem` ["t", "T", "y", "Y"] = Right $ LogicalValue (Just True)
 fieldFromCSV DateType v = Right $ DateValue $ ASCII.filter (/= '-') v
 
+-- | Convert a CSV header and records to a list of .dbf field descriptors with the same names and inferred types
 descriptorsFromCsv :: CSV.Header -> Vector CSV.Record -> Either String [FieldDescriptor Identity]
 descriptorsFromCsv hdr rs
   | length columns /= length hdr = Left ("Number of columns (" <> show (length columns) <>
@@ -203,9 +228,11 @@ descriptorsFromCsv hdr rs
   | otherwise = sequence $ zipWith fieldDescriptorFromCsv (Vector.toList hdr) columns
   where columns = List.transpose (Vector.toList <$> Vector.toList rs)
 
+-- | Given a field name and a list of its CSV values, construct a field descriptor with inferred type
 fieldDescriptorFromCsv :: ByteString -> [ByteString] -> Either String (FieldDescriptor Identity)
 fieldDescriptorFromCsv name values = typedFieldDescriptorFromCsv name (inferType values) values
 
+-- | Infer the best .dbf field type for the given list of CSV values
 inferType :: [ByteString] -> FieldType
 inferType values = head $ filter (`Set.member` foldr Set.intersection allTypes possibleTypeSets) typesByPreference
   where typesByPreference = [LogicalType, DateType, NumberType, CharacterType, MemoType,
@@ -213,6 +240,7 @@ inferType values = head $ filter (`Set.member` foldr Set.intersection allTypes p
         allTypes = Set.fromList [minBound .. maxBound]
         possibleTypeSets = possibleTypeSet <$> values
 
+-- | Infer all possible .dbf field types for the given CSV value
 possibleTypeSet :: ByteString -> Set FieldType
 possibleTypeSet value = Set.fromList $ concat [
   [CharacterType | ASCII.all Char.isAscii value],
@@ -231,6 +259,7 @@ possibleTypeSet value = Set.fromList $ concat [
               ASCII.all Char.isDigit absolute, absolute <= "2147483647"],
   [BinaryType, MemoType]]
 
+-- | Construct a field descriptor from its name, its .dbf type, and a list of its CSV values
 typedFieldDescriptorFromCsv :: ByteString -> FieldType -> [ByteString] -> Either String (FieldDescriptor Identity)
 typedFieldDescriptorFromCsv name ty values = Rank2.traverse (Identity <$>) FieldDescriptor{
   fieldName = if ByteString.length name < 11 then Right name else Left ("Field name too long: " <> show name),
@@ -241,6 +270,7 @@ typedFieldDescriptorFromCsv name ty values = Rank2.traverse (Identity <$>) Field
   setFieldsFlag = Right False,
   mdxFieldFlag = Right False}
 
+-- | Determine the maximum length required for a .dbf field from its type and the list of CSV values
 maxFieldLength :: FieldType -> [ByteString] -> Either String Word8
 maxFieldLength CharacterType values
   | width < 0xFFFF = Right (fromIntegral $ width `mod` 256)
@@ -261,6 +291,7 @@ maxFieldLength AutoincrementType _ = Right 4
 maxFieldLength TimestampType _ = Right 8
 maxFieldLength ty _ = Left ("Don't know the field length for " <> show ty)
 
+-- | Determine the maximum decimal count required for a .dbf field from its type and the list of CSV values
 maxFieldDecimals :: FieldType -> [ByteString] -> Either String Word8
 maxFieldDecimals CharacterType values
   | width < 0xFFFF = Right (fromIntegral $ width `div` 256)
@@ -277,6 +308,7 @@ maxFieldDecimals NumberType values
                        [] -> Right 0
                        _ -> Left ("More than one decimal point in number " <> show n)
 
+-- | Convert a .dbf field value to CSV
 csvField :: FieldValue -> ByteString
 csvField (BinaryValue bs) = bs
 csvField (CharacterValue bs) = bs
@@ -291,6 +323,7 @@ csvField (LogicalValue Nothing) = "?"
 csvField (LogicalValue (Just False)) = "f"
 csvField (LogicalValue (Just True)) = "t"
 
+-- | The root format of a .dbf file
 file :: Format (Parser Lazy.ByteString) Maybe Lazy.ByteString (DBaseFile Identity)
 file = mapValue (uncurry DBaseFile) (header &&& records) $
   (deppair (mapSerialized Lazy.fromStrict Lazy.toStrict fileHeader) $
@@ -299,6 +332,7 @@ file = mapValue (uncurry DBaseFile) (header &&& records) $
   <* (literal (Lazy.singleton 0x1A) <?> "EOF marker")
 --  <* eof
 
+-- | The format of a .dbf file header
 fileHeader :: Format (Parser ByteString) Maybe ByteString (FileHeader Identity)
 fileHeader = mfix $ \self-> record FileHeader{
   signature = satisfy (`elem` [0x2, 0x3, 0x4, 0x5]) byte,
@@ -327,17 +361,20 @@ fileHeader = mfix $ \self-> record FileHeader{
     totalSize = word16le,
     properties = take (fromIntegral $ totalSize $ fieldProperties self)}-}
 
+-- | Parse/decode a last-update date
 decodeDate :: ByteString -> Maybe Calendar.Day
 decodeDate bs = case ByteString.unpack bs of
   [y, m, d] -> Calendar.fromGregorianValid (1900 + fromIntegral y) (fromIntegral m) (fromIntegral d)
   _ -> Nothing
 
+-- | Serialize/encode a last-update date
 encodeDate :: Calendar.Day -> Maybe ByteString
 encodeDate date
   | let (year, month, day) = Calendar.toGregorian date, year >= 1900 && year < 2156
   = Just $ ByteString.pack $ [fromIntegral $ year - 1900, fromIntegral month, fromIntegral day]
   | otherwise = Nothing
 
+-- | The format of a .dbf field descriptor
 fieldDescriptor :: Format (Parser ByteString) Maybe ByteString (FieldDescriptor Identity)
 fieldDescriptor = record FieldDescriptor{
   fieldName = padded1 (ByteString.replicate 11 0) (takeWhile (\c-> c >= "\x01" && c < "\x80")) <?> "field name",
@@ -364,12 +401,13 @@ fieldDescriptor = record FieldDescriptor{
   setFieldsFlag = flag <* literal (ByteString.replicate 7 0),
   mdxFieldFlag = flag}
   
-
+-- | The format of a single .dbf record
 tableRecord :: [FieldDescriptor Identity] -> Format (Parser ByteString) Maybe ByteString (Record Identity)
 tableRecord expected = record Record{
   deleted = True <$ value byte (fromIntegral $ Char.ord '*') <|> False <$ value byte (fromIntegral $ Char.ord ' '),
   fields = forF expected fieldValue}
 
+-- | The format of a single .dbf record field value
 fieldValue :: FieldDescriptor Identity -> Format (Parser ByteString) Maybe ByteString FieldValue
 fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, fieldDecimals = Identity dec} = case t of
   CharacterType | let strLen = 256 * fromIntegral dec + fromIntegral len
@@ -390,15 +428,19 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
   where trimInsignificantZeros 0 = id
         trimInsignificantZeros _ = ASCII.dropWhileEnd (== '.') . ASCII.dropWhileEnd (== '0')
 
+-- | Space padding required to extend a 'ByteString' to the desired length
 padding :: Int -> ByteString -> ByteString
 padding targetLength s = ASCII.replicate (targetLength - ByteString.length s) ' '
 
+-- | Little-endian 'Word16' format
 word16le :: Format (Parser ByteString) Maybe ByteString Word16
 word16le = cereal' getWord16le putWord16le
 
+-- | Format for a boolean encoded in a single byte
 flag :: Format (Parser ByteString) Maybe ByteString Bool
 flag = False <$ value byte 0 <|> True <$ value byte 1
 
+-- | Map a list into formats and combine them
 forF :: forall m n s a b. (Monad m, AlternativeFail n, InputParsing m, ParserInput m ~ s, Monoid s, Eq b, Show b)
      => [a] -> (a -> Format m n s b) -> Format m n s [b]
 forF (x : xs) f = mapMaybeValue (Just . uncurry (:)) List.uncons $ pair (f x) (forF xs f)
