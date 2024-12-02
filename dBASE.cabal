@@ -21,8 +21,9 @@ library
     exposed-modules:  DBase
     -- other-modules:
     -- other-extensions:
-    build-depends:    base ^>=4.20.0.0, bytestring >= 0.10 && < 0.13, construct ^>=0.3,
-                      cereal ^>= 0.5, incremental-parser ^>= 0.5, input-parsers ^>= 0.3, rank2classes >=1.0 && <1.6,
+    build-depends:    base >=4.18.0.0 && < 4.20.0.0 || ^>=4.20.0.0,
+                      bytestring >= 0.10 && < 0.13, cereal ^>= 0.5,
+                      construct ^>=0.3, incremental-parser ^>= 0.5, input-parsers ^>= 0.3, rank2classes >=1.0 && <1.6,
                       cassava ^>= 0.4 || ^>= 0.5, scientific ^>= 0.3, time >= 1.11 && < 1.15,
                       containers >= 0.1 && < 0.8, vector >= 0.8 && < 0.14
     hs-source-dirs:   src
@@ -34,7 +35,7 @@ executable dbf2csv
     -- other-modules:
     -- other-extensions:
     build-depends:
-        base ^>=4.20.0.0,
+        base,
         optparse-applicative >= 0.15 && < 0.19,
         bytestring, cassava,
         dBASE
@@ -48,7 +49,7 @@ executable csv2dbf
     -- other-modules:
     -- other-extensions:
     build-depends:
-        base ^>=4.20.0.0,
+        base,
         optparse-applicative >= 0.15 && < 0.19,
         bytestring, cassava, time,
         dBASE
@@ -62,9 +63,23 @@ executable dbfcut
     -- other-modules:
     -- other-extensions:
     build-depends:
-        base ^>=4.20.0.0,
+        base,
         optparse-applicative >= 0.15 && < 0.19,
         bytestring, dBASE
+
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
+executable dbfzip
+    import:           warnings
+    main-is:          Zip.hs
+    -- other-modules:
+    -- other-extensions:
+    build-depends:
+        base >=4.18.0.0 && <4.20.0.0 || ^>=4.20.0.0,
+        optparse-applicative >= 0.15 && < 0.19,
+        bytestring, time,
+        dBASE
 
     hs-source-dirs:   app
     default-language: Haskell2010
@@ -78,5 +93,5 @@ test-suite dBASE-test
     hs-source-dirs:   test
     main-is:          Main.hs
     build-depends:
-        base ^>=4.20.0.0,
+        base,
         dBASE

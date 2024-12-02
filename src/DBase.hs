@@ -2,12 +2,12 @@
 
 module DBase (
   -- * Functions
-  DBase.parse, DBase.serialize, project, csvHeader, csvRecords, headerFromCsv, recordFromCSV,
+  DBase.parse, DBase.serialize, project, csvHeader, csvRecords, headerFromCsv, recordFromCSV, DBase.zipWithM, encodeDate,
   -- * Types
   DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
 
 import Control.Arrow ((&&&))
-import Control.Monad (join)
+import Control.Monad (join, zipWithM)
 import Data.Functor.Identity (Identity(Identity, runIdentity))
 import Data.Word (Word8, Word16, Word32, Word64)
 import Data.ByteString (ByteString)
@@ -143,6 +143,13 @@ project pred DBaseFile{header = hdr@FileHeader{fieldDescriptors = Identity field
   where projectRecord r@Record{fields = Identity values} = r{fields = Identity $ projectList values}
         projectList = mapMaybe (\(keep, x)-> if keep then Just x else Nothing) . zip keeps
         keeps = pred . runIdentity . fieldName <$> fields
+
+zipWithM :: Applicative m
+         => (FileHeader Identity -> FileHeader Identity -> m (FileHeader Identity))
+         -> (Record Identity -> Record Identity -> m (Record Identity))
+         -> DBaseFile Identity -> DBaseFile Identity -> m (DBaseFile Identity)
+zipWithM fh fr DBaseFile{header = h1, records = rs1} DBaseFile{header = h2, records = rs2} =
+  DBaseFile . fixHeaderLength <$> fh h1 h2 <*> Control.Monad.zipWithM fr rs1 rs2
 
 csvHeader :: DBaseFile Identity -> CSV.Header
 csvHeader = Vector.fromList . map (runIdentity . fieldName) . runIdentity . fieldDescriptors . header
