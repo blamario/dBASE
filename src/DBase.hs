@@ -11,7 +11,9 @@ module DBase (
   -- * Conversion from and to CSV
   csvHeader, csvRecords, headerFromCsv, recordFromCSV,
   -- * Types
-  DBaseFile(..), FileHeader(..), Record(..), FieldType(..), FieldValue(..)) where
+  DBaseFile(..), FileHeader(..), Record(..), FieldDescriptor(..), FieldType(..), FieldValue(..),
+  -- * Utility functions
+  fixHeaderLength, fixRecordLength) where
 
 import Control.Arrow ((&&&))
 import Control.Monad (join, zipWithM)
@@ -179,12 +181,12 @@ csvRecords = map (Vector.fromList . map csvField . runIdentity . fields) . filte
 
 -- | Convert CSV into a .dbf file header, given the date of the last .dbf update
 headerFromCsv :: CSV.Header -> Calendar.Day -> Vector CSV.Record -> Either String (FileHeader Identity)
-headerFromCsv hdr updated rs = fixHeaderLength <$> Rank2.traverse (Identity <$>) FileHeader{
+headerFromCsv hdr updated rs = fixHeaderLength . fixRecordLength <$> Rank2.traverse (Identity <$>) FileHeader{
   signature = Right 0x3,
   lastUpdate = Right updated,
   recordCount = Right (fromIntegral $ Vector.length rs),
   headerLength = Right 0,
-  recordLength = succ . sum . map (fromIntegral . runIdentity . fieldLength) <$> descriptors,
+  recordLength = Right 0,
   reserved1 = Right 0,
   incompleteTransaction = Right False,
   encrypted = Right False,
@@ -193,13 +195,17 @@ headerFromCsv hdr updated rs = fixHeaderLength <$> Rank2.traverse (Identity <$>)
   mdxTableFlag = Right False,
   codePage = Right 1,
   reserved3 = Right 0,
-  fieldDescriptors = descriptors}
-  where descriptors = descriptorsFromCsv hdr rs
+  fieldDescriptors = descriptorsFromCsv hdr rs}
 
 -- | Fix the value of the 'headerLength' field in the given .dbf header
 fixHeaderLength :: FileHeader Identity -> FileHeader Identity
 fixHeaderLength h = h{headerLength = Identity $ fromIntegral $ maybe 0 ByteString.length
                                               $ Construct.serialize fileHeader h}
+
+-- | Fix the value of the 'recordLength' field in the given .dbf header
+fixRecordLength :: FileHeader Identity -> FileHeader Identity
+fixRecordLength h@FileHeader{fieldDescriptors = fields} =
+  h{recordLength = succ . sum . map (fromIntegral . runIdentity . fieldLength) <$> fields}
 
 -- | Given a .dbf header, convert a single CSV record to a .dbf record conforming to the header
 recordFromCSV :: FileHeader Identity -> CSV.Record -> Either String (Record Identity)
