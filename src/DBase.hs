@@ -137,6 +137,11 @@ $(Rank2.TH.deriveAll ''FieldProperties)
 $(Rank2.TH.deriveAll ''FieldDescriptor)
 $(Rank2.TH.deriveAll ''FileHeader)
 
+deriving instance Eq (DBaseFile Identity)
+deriving instance Eq (FileHeader Identity)
+deriving instance Eq (FieldDescriptor Identity)
+deriving instance Eq (FieldProperties Identity)
+deriving instance Eq (Record Identity)
 deriving instance Show (DBaseFile Identity)
 deriving instance Show (FileHeader Identity)
 deriving instance Show (FieldDescriptor Identity)
@@ -431,6 +436,9 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
     (fmap FloatValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
     (Just . ASCII.pack . show . \(FloatValue x)-> x)
     (take $ fromIntegral len)
+  LogicalType -> LogicalValue Nothing <$ (literal "?" <|> literal " ")
+                 <|> LogicalValue (Just True) <$ (literal "t" <|> literal "T" <|> literal "y" <|> literal "Y")
+                 <|> LogicalValue (Just False) <$ (literal "f" <|> literal "F" <|> literal "n" <|> literal "N")
   where trimInsignificantZeros 0 = id
         trimInsignificantZeros _ = ASCII.dropWhileEnd (== '.') . ASCII.dropWhileEnd (== '0')
 

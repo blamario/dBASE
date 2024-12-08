@@ -87,11 +87,13 @@ executable dbfzip
 test-suite dBASE-test
     import:           warnings
     default-language: Haskell2010
-    -- other-modules:
     -- other-extensions:
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          Main.hs
+    other-modules:    DBaseGen
     build-depends:
         base,
+        bytestring, rank2classes, scientific, time,
+        hedgehog ^>= 1.4 || ^>=1.5,
         dBASE
