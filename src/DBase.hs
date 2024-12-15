@@ -236,7 +236,7 @@ descriptorsFromCsv :: CSV.Header -> Vector CSV.Record -> Either String [FieldDes
 descriptorsFromCsv hdr rs
   | length columns /= length hdr = Left ("Number of columns (" <> show (length columns) <>
                                          ") doesn't match with the header (" <> shows (length hdr) ")")
-  | otherwise = sequence $ zipWith fieldDescriptorFromCsv (Vector.toList hdr) columns
+  | otherwise = sequenceA $ zipWith fieldDescriptorFromCsv (Vector.toList hdr) columns
   where columns = List.transpose (Vector.toList <$> Vector.toList rs)
 
 -- | Given a field name and a list of its CSV values, construct a field descriptor with inferred type
@@ -416,7 +416,7 @@ fieldDescriptor = record FieldDescriptor{
 tableRecord :: [FieldDescriptor Identity] -> Format (Parser ByteString) Maybe ByteString (Record Identity)
 tableRecord expected = record Record{
   deleted = True <$ value byte (fromIntegral $ Char.ord '*') <|> False <$ value byte (fromIntegral $ Char.ord ' '),
-  fields = forF expected fieldValue}
+  fields = Construct.sequence (fieldValue <$> expected)}
 
 -- | The format of a single .dbf record field value
 fieldValue :: FieldDescriptor Identity -> Format (Parser ByteString) Maybe ByteString FieldValue
@@ -453,9 +453,3 @@ word16le = cereal' getWord16le putWord16le
 -- | Format for a boolean encoded in a single byte
 flag :: Format (Parser ByteString) Maybe ByteString Bool
 flag = False <$ value byte 0 <|> True <$ value byte 1
-
--- | Map a list into formats and combine them
-forF :: forall m n s a b. (Monad m, AlternativeFail n, InputParsing m, ParserInput m ~ s, Monoid s, Eq b, Show b)
-     => [a] -> (a -> Format m n s b) -> Format m n s [b]
-forF (x : xs) f = mapMaybeValue (Just . uncurry (:)) List.uncons $ pair (f x) (forF xs f)
-forF [] _ = [] <$ literal (mempty :: s)
