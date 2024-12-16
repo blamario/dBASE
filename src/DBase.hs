@@ -1,7 +1,9 @@
 -- | Parsing, conversion, manipulation, and serialization of dBASE (.dbf) files.
 --
 -- The data types used for representing the DBF file structure in memory rely on the Higher-Kinded Data pattern.
-{-# LANGUAGE FlexibleInstances, OverloadedStrings, ScopedTypeVariables, StandaloneDeriving, TemplateHaskell, TypeOperators #-}
+{-# LANGUAGE Haskell2010 #-}
+{-# LANGUAGE FlexibleInstances, OverloadedStrings, ScopedTypeVariables, GeneralizedNewtypeDeriving, StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell, TypeOperators #-}
 
 module DBase (
   -- * Parsing and serialization
@@ -32,6 +34,7 @@ import Data.Serialize
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Time.Calendar as Calendar
+import Data.Time.Format.ISO8601 (iso8601ParseM, iso8601Show)
 import qualified Rank2
 import qualified Rank2.TH
 import Text.Parser.Input (InputParsing, ParserInput)
@@ -120,7 +123,7 @@ data FieldType = CharacterType
 -- | Semantic domain of all possible field values
 data FieldValue = BinaryValue !ByteString
                 | CharacterValue !ByteString
-                | DateValue !ByteString
+                | DateValue !Calendar.Day
                 | NumericValue !Scientific
                 | LogicalValue !(Maybe Bool)
                 | Memo !ByteString
@@ -229,7 +232,12 @@ fieldFromCSV LogicalType v
   | v == "?" = Right $ LogicalValue Nothing
   | v `elem` ["f", "F", "n", "N"] = Right $ LogicalValue (Just False)
   | v `elem` ["t", "T", "y", "Y"] = Right $ LogicalValue (Just True)
-fieldFromCSV DateType v = Right $ DateValue $ ASCII.filter (/= '-') v
+fieldFromCSV DateType v = DateValue <$> getEither (iso8601ParseM $ ASCII.unpack v)
+
+newtype EitherFail a = EitherFail{getEither :: Either String a} deriving (Functor, Applicative, Monad, Show)
+
+instance MonadFail EitherFail where
+  fail = EitherFail . Left
 
 -- | Convert a CSV header and records to a list of .dbf field descriptors with the same names and inferred types
 descriptorsFromCsv :: CSV.Header -> Vector CSV.Record -> Either String [FieldDescriptor Identity]
@@ -323,7 +331,7 @@ maxFieldDecimals NumberType values
 csvField :: FieldValue -> ByteString
 csvField (BinaryValue bs) = bs
 csvField (CharacterValue bs) = bs
-csvField (DateValue bs) = bs
+csvField (DateValue d) = ASCII.pack (iso8601Show d)
 csvField (TimestampValue bs) = bs
 csvField (NumericValue n) = ASCII.pack (formatScientific Fixed (if isInteger n then Just 0 else Nothing) n)
 csvField (LongValue n) = ASCII.pack (show n)
@@ -439,8 +447,15 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
   LogicalType -> LogicalValue Nothing <$ (literal "?" <|> literal " ")
                  <|> LogicalValue (Just True) <$ (literal "t" <|> literal "T" <|> literal "y" <|> literal "Y")
                  <|> LogicalValue (Just False) <$ (literal "f" <|> literal "F" <|> literal "n" <|> literal "N")
+  DateType -> mapMaybeValue
+    (fmap DateValue . iso8601ParseM . ASCII.unpack . ASCII.intercalate "-")
+    (\(DateValue date)-> Just $ ASCII.split '-' $ ASCII.pack $ iso8601Show date)
+    (Construct.sequence [take 4, take 2, take 2])
   where trimInsignificantZeros 0 = id
         trimInsignificantZeros _ = ASCII.dropWhileEnd (== '.') . ASCII.dropWhileEnd (== '0')
+        readMaybeInt bs = case ASCII.readWord bs of
+          Just (w, rest) | ASCII.null rest -> Just (fromIntegral w)
+          _ -> Nothing
 
 -- | Space padding required to extend a 'ByteString' to the desired length
 padding :: Int -> ByteString -> ByteString
