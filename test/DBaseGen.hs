@@ -18,6 +18,7 @@ import Control.Monad (replicateM)
 import Data.Functor.Identity
 import Data.Scientific (scientific)
 import Data.Word
+import Data.Time.Calendar qualified as Calendar
 
 import DBase
 
@@ -73,9 +74,10 @@ lengthOfFieldType :: FieldType -> Hedgehog.Gen Word8
 lengthOfFieldType CharacterType = Gen.word8 (Range.exponential 0 255)
 lengthOfFieldType NumberType = Gen.word8 (Range.linear 1 18)
 lengthOfFieldType LogicalType = pure 1
+lengthOfFieldType DateType = pure 8
 
 fieldType :: Hedgehog.Gen FieldType
-fieldType = Gen.element [CharacterType, NumberType, LogicalType]
+fieldType = Gen.element [CharacterType, NumberType, LogicalType, DateType]
 
 record :: [FieldDescriptor Identity] -> Hedgehog.Gen (Record Identity)
 record fds = Rank2.traverse (Identity <$>) Record{
@@ -92,5 +94,6 @@ fieldValue FieldDescriptor{DBase.fieldType = Identity t, fieldLength = Identity 
       if d == 0 then flip scientific 0 <$> Gen.integral (Range.linearFrom (1 - 10^(len-1)) 0 (10^len-1))
       else flip scientific (- fromIntegral d) <$> Gen.integral (Range.linearFrom (1 - 10^(len-d-2)) 0 (10^(len-d-1) - 1))
     LogicalType -> LogicalValue <$> Gen.maybe Gen.enumBounded
+    DateType -> DateValue <$> Gen.enum (fromGregorian 1 1 1) (fromGregorian 9999 12 31)
   where d' = fromIntegral d
         len' = fromIntegral len
