@@ -348,14 +348,15 @@ file = mapValue (uncurry DBaseFile) (header &&& records) $
   (deppair (mapSerialized Lazy.fromStrict Lazy.toStrict fileHeader) $
    \FileHeader{recordCount = Identity n, fieldDescriptors = Identity descriptors}->
      count (fromIntegral n) $ mapSerialized Lazy.fromStrict Lazy.toStrict $ tableRecord descriptors)
-  <* (literal (Lazy.singleton 0x1A) <?> "EOF marker")
+  <* ((literal (Lazy.singleton 0x1A) <?> "EOF marker")
+      <|> literal mempty)
 --  <* eof
 
 -- | The format of a .dbf file header
 fileHeader :: Format (Parser ByteString) Maybe ByteString (FileHeader Identity)
 fileHeader = mfix $ \self-> record FileHeader{
   signature = satisfy (`elem` [0x2, 0x3, 0x4, 0x5]) byte,
-  lastUpdate = mapMaybeValue decodeDate encodeDate $ take 3,
+  lastUpdate = mapMaybeValue decodeDate encodeDate $ take 3 <?> "last update",
   recordCount = cereal' getWord32le putWord32le,
   headerLength = word16le,
   recordLength = word16le,
@@ -399,7 +400,8 @@ fieldDescriptor = record FieldDescriptor{
   fieldName = mapMaybeValue
                 (Just . ASCII.takeWhile (\c-> c /= '\0'))
                 (\name-> if ByteString.length name > 10 then Nothing else Just $ name <> padding 11 name '\0')
-                (take 11),
+                (take 11)
+              <?> "field name",
   fieldType = CharacterType <$ literal "C"
               <|> NumberType <$ literal "N"
               <|> LogicalType <$ literal "L"
@@ -420,7 +422,7 @@ fieldDescriptor = record FieldDescriptor{
   fieldLength = literal "\0\0\0\0" *> byte <?> "field length",
   fieldDecimals = satisfy (<= 15) byte <* literal "\0\0" <?> "field decimals",
   workAreaID = byte <* literal "\0\0",
-  setFieldsFlag = flag <* literal (ByteString.replicate 7 0),
+  setFieldsFlag = flag <* literal (ByteString.replicate 7 0) <?> "set fields flag",
   mdxFieldFlag = flag}
   
 -- | The format of a single .dbf record
@@ -431,29 +433,35 @@ tableRecord expected = record Record{
 
 -- | The format of a single .dbf record field value
 fieldValue :: FieldDescriptor Identity -> Format (Parser ByteString) Maybe ByteString FieldValue
-fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, fieldDecimals = Identity dec} = case t of
+fieldValue FieldDescriptor{fieldName = Identity name, fieldType = Identity t,
+                           fieldLength = Identity len, fieldDecimals = Identity dec} = case t of
   CharacterType | let strLen = 256 * fromIntegral dec + fromIntegral len
                   -> mapMaybeValue
      (Just . CharacterValue . ASCII.dropWhileEnd (== ' '))
      (\(CharacterValue s)-> if ByteString.length s > strLen then Nothing
                             else Just $ s <> padding strLen s ' ')
      (take strLen)
+     <?> ("value of character field " <> ASCII.unpack name)
   NumberType -> mapMaybeValue
     (fmap NumericValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
     (Just . (\s-> padding (fromIntegral len) s ' ' <> s) . trimInsignificantZeros dec . ASCII.pack
      . formatScientific Fixed (Just $ fromIntegral dec) . \(NumericValue x)-> x)
     (take $ fromIntegral len)
+    <?> ("value of numeric field " <> ASCII.unpack name)
   FloatType -> mapMaybeValue
     (fmap FloatValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
     (Just . ASCII.pack . show . \(FloatValue x)-> x)
     (take $ fromIntegral len)
+    <?> ("value of float field " <> ASCII.unpack name)
   LogicalType -> LogicalValue Nothing <$ (literal "?" <|> literal " ")
                  <|> LogicalValue (Just True) <$ (literal "t" <|> literal "T" <|> literal "y" <|> literal "Y")
                  <|> LogicalValue (Just False) <$ (literal "f" <|> literal "F" <|> literal "n" <|> literal "N")
+                 <?> "logical field value"
   DateType -> mapMaybeValue
     (fmap DateValue . iso8601ParseM . ASCII.unpack . ASCII.intercalate "-")
     (\(DateValue date)-> Just $ ASCII.split '-' $ ASCII.pack $ iso8601Show date)
     (Construct.sequence [take 4, take 2, take 2])
+    <?> ("value of date field " <> ASCII.unpack name)
   where trimInsignificantZeros 0 = id
         trimInsignificantZeros _ = ASCII.dropWhileEnd (== '.') . ASCII.dropWhileEnd (== '0')
         readMaybeInt bs = case ASCII.readWord bs of
@@ -470,4 +478,4 @@ word16le = cereal' getWord16le putWord16le
 
 -- | Format for a boolean encoded in a single byte
 flag :: Format (Parser ByteString) Maybe ByteString Bool
-flag = False <$ value byte 0 <|> True <$ value byte 1
+flag = False <$ value byte 0 <|> True <$ value byte 1 <?> "flag"
