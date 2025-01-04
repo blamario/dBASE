@@ -396,7 +396,10 @@ encodeDate date
 -- | The format of a .dbf field descriptor
 fieldDescriptor :: Format (Parser ByteString) Maybe ByteString (FieldDescriptor Identity)
 fieldDescriptor = record FieldDescriptor{
-  fieldName = padded1 (ByteString.replicate 11 0) (takeWhile (\c-> c >= "\x01" && c < "\x80")) <?> "field name",
+  fieldName = mapMaybeValue
+                (Just . ASCII.takeWhile (\c-> c /= '\0'))
+                (\name-> if ByteString.length name > 10 then Nothing else Just $ name <> padding 11 name '\0')
+                (take 11),
   fieldType = CharacterType <$ literal "C"
               <|> NumberType <$ literal "N"
               <|> LogicalType <$ literal "L"
