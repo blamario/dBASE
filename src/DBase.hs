@@ -419,7 +419,7 @@ fieldDescriptor = record FieldDescriptor{
               <|> VarCharType <$ literal "V"
               <|> TimestampType <$ literal "@"
               <?> "field type",
-  fieldLength = literal "\0\0\0\0" *> byte <?> "field length",
+  fieldLength = mapValue (const ()) (const $ replicate 4 0) (count 4 byte) *> byte <?> "field length",
   fieldDecimals = satisfy (<= 15) byte <* literal "\0\0" <?> "field decimals",
   workAreaID = byte <* literal "\0\0",
   setFieldsFlag = flag <* literal (ByteString.replicate 7 0) <?> "set fields flag",
