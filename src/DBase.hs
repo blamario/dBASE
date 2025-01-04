@@ -78,11 +78,12 @@ data FieldDescriptor f = FieldDescriptor{
   -- 4 bytes of offset or memory address,
   fieldLength :: f Word8,
   fieldDecimals :: f Word8,
-  -- reserved1f :: f Word16,
+  reserved1f :: f Word16,
   workAreaID :: f Word8,
-  -- reserved2f :: f Word16,
-  setFieldsFlag :: f Bool,
-  mdxFieldFlag :: f Bool}
+  reserved2f :: f Word16,
+  setFieldsFlag :: f Word8,
+  reserved3f :: f ByteString, -- 7 bytes
+  mdxFieldFlag :: f Word8}
 
 -- | Field properties inside a DBF file header, unused
 data FieldProperties f = FieldProperties{
@@ -285,9 +286,11 @@ typedFieldDescriptorFromCsv name ty values = Rank2.traverse (Identity <$>) Field
   fieldType = Right ty,
   fieldLength = maxFieldLength ty values,
   fieldDecimals = maxFieldDecimals ty values,
+  reserved1f = Right 0,
   workAreaID = Right 1,
-  setFieldsFlag = Right False,
-  mdxFieldFlag = Right False}
+  reserved2f = Right 0,
+  setFieldsFlag = Right 0,
+  mdxFieldFlag = Right 0}
 
 -- | Determine the maximum length required for a .dbf field from its type and the list of CSV values
 maxFieldLength :: FieldType -> [ByteString] -> Either String Word8
@@ -420,10 +423,13 @@ fieldDescriptor = record FieldDescriptor{
               <|> TimestampType <$ literal "@"
               <?> "field type",
   fieldLength = mapValue (const ()) (const $ replicate 4 0) (count 4 byte) *> byte <?> "field length",
-  fieldDecimals = satisfy (<= 15) byte <* literal "\0\0" <?> "field decimals",
-  workAreaID = byte <* literal "\0\0",
-  setFieldsFlag = flag <* literal (ByteString.replicate 7 0) <?> "set fields flag",
-  mdxFieldFlag = flag}
+  fieldDecimals = satisfy (<= 15) byte <?> "field decimals",
+  reserved1f = cereal,
+  workAreaID = byte,
+  reserved2f = cereal,
+  setFieldsFlag = byte,
+  reserved3f = take 7,
+  mdxFieldFlag = byte}
   
 -- | The format of a single .dbf record
 tableRecord :: [FieldDescriptor Identity] -> Format (Parser ByteString) Maybe ByteString (Record Identity)
