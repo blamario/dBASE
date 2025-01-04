@@ -433,11 +433,11 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
                   -> mapMaybeValue
      (Just . CharacterValue . ASCII.dropWhileEnd (== ' '))
      (\(CharacterValue s)-> if ByteString.length s > strLen then Nothing
-                            else Just $ s <> padding strLen s)
+                            else Just $ s <> padding strLen s ' ')
      (take strLen)
   NumberType -> mapMaybeValue
     (fmap NumericValue . readMaybe . ASCII.unpack . ASCII.dropWhile (== ' '))
-    (Just . (\s-> padding (fromIntegral len) s <> s) . trimInsignificantZeros dec . ASCII.pack
+    (Just . (\s-> padding (fromIntegral len) s ' ' <> s) . trimInsignificantZeros dec . ASCII.pack
      . formatScientific Fixed (Just $ fromIntegral dec) . \(NumericValue x)-> x)
     (take $ fromIntegral len)
   FloatType -> mapMaybeValue
@@ -457,9 +457,9 @@ fieldValue FieldDescriptor{fieldType = Identity t, fieldLength = Identity len, f
           Just (w, rest) | ASCII.null rest -> Just (fromIntegral w)
           _ -> Nothing
 
--- | Space padding required to extend a 'ByteString' to the desired length
-padding :: Int -> ByteString -> ByteString
-padding targetLength s = ASCII.replicate (targetLength - ByteString.length s) ' '
+-- | Character padding required to extend a 'ByteString' to the desired length
+padding :: Int -> ByteString -> Char -> ByteString
+padding targetLength s = ASCII.replicate (targetLength - ByteString.length s)
 
 -- | Little-endian 'Word16' format
 word16le :: Format (Parser ByteString) Maybe ByteString Word16
