@@ -66,8 +66,11 @@ fieldDescriptorOfType t len = Rank2.traverse (Identity <$>) FieldDescriptor{
                  | len == 1 -> pure 0
                  | otherwise -> Gen.word8 (Range.linear 0 (min 15 $ len-2))
       _ -> pure 0,
+  reserved1f = Gen.word16 Range.linearBounded,
   workAreaID = Gen.enumBounded,
+  reserved2f = Gen.word16 Range.linearBounded,
   setFieldsFlag = Gen.enumBounded,
+  reserved3f = Gen.bytes (Range.singleton 7),
   mdxFieldFlag = Gen.enumBounded}
 
 lengthOfFieldType :: FieldType -> Hedgehog.Gen Word8
