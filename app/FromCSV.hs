@@ -27,7 +27,7 @@ main = do
         dbfHeader <- headerFromCsv csvHeader (utctDay now) csvRecords
         dbfRecords <- traverse (recordFromCSV dbfHeader) csvRecords
         maybe (Left $ "Cannot serialize DBF:\n" ++ show (dbfHeader, take 10 $ toList dbfRecords)) Right
-          $ serialize (DBaseFile dbfHeader $ toList dbfRecords)
+          $ serialize (DBaseFile dbfHeader mempty $ toList dbfRecords)
   case dbf of
     Left err -> error err
     Right bytes -> ByteString.putStr bytes

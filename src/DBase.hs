@@ -51,6 +51,7 @@ import Prelude hiding ((*>), (<*), (<$), take, takeWhile)
 -- | Data type representing a DBF file
 data DBaseFile f = DBaseFile{
   header :: FileHeader f,
+  postHeaderPadding :: ByteString,
   records :: [Record f]}
 
 -- | DBF file header representation
@@ -166,6 +167,7 @@ serialize = Construct.serialize file
 project :: (ByteString -> Bool) -> DBaseFile Identity -> DBaseFile Identity
 project pred DBaseFile{header = hdr@FileHeader{fieldDescriptors = Identity fields}, records = recs} =
   DBaseFile{header = fixHeaderLength hdr{fieldDescriptors = Identity $ projectList fields},
+            postHeaderPadding = mempty,
             records = map projectRecord recs}
   where projectRecord r@Record{fields = Identity values} = r{fields = Identity $ projectList values}
         projectList = mapMaybe (\(keep, x)-> if keep then Just x else Nothing) . zip keeps
@@ -178,7 +180,7 @@ zipWithM :: Applicative m
          -> (Record Identity -> Record Identity -> m (Record Identity))
          -> DBaseFile Identity -> DBaseFile Identity -> m (DBaseFile Identity)
 zipWithM fh fr DBaseFile{header = h1, records = rs1} DBaseFile{header = h2, records = rs2} =
-  DBaseFile . fixHeaderLength <$> fh h1 h2 <*> Control.Monad.zipWithM fr rs1 rs2
+  DBaseFile . fixHeaderLength <$> fh h1 h2 <*> pure mempty <*> Control.Monad.zipWithM fr rs1 rs2
 
 -- | Convert a .dbf file header into a CSV header
 csvHeader :: DBaseFile Identity -> CSV.Header
@@ -347,10 +349,12 @@ csvField (LogicalValue (Just True)) = "t"
 
 -- | The root format of a .dbf file
 file :: Format (Parser Lazy.ByteString) Maybe Lazy.ByteString (DBaseFile Identity)
-file = mapValue (uncurry DBaseFile) (header &&& records) $
+file = mapValue (uncurry $ uncurry . DBaseFile) (header &&& postHeaderPadding &&& records) $
   (deppair (mapSerialized Lazy.fromStrict Lazy.toStrict fileHeader) $
-   \FileHeader{recordCount = Identity n, fieldDescriptors = Identity descriptors}->
-     count (fromIntegral n) $ mapSerialized Lazy.fromStrict Lazy.toStrict $ tableRecord descriptors)
+   \h@FileHeader{headerLength = len, recordCount = Identity n, fieldDescriptors = Identity descriptors}->
+     pair (mapValue Lazy.toStrict Lazy.fromStrict $ take
+           $ fromIntegral len - maybe 0 ByteString.length (Construct.serialize fileHeader h)) $
+     (count (fromIntegral n) $ mapSerialized Lazy.fromStrict Lazy.toStrict $ tableRecord descriptors))
   <* ((literal (Lazy.singleton 0x1A) <?> "EOF marker")
       <|> literal mempty)
 --  <* eof
