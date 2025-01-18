@@ -32,7 +32,10 @@ import Hedgehog.Range qualified as Range
 
 dbf :: Hedgehog.Gen (DBaseFile Identity)
 dbf = do h@FileHeader{recordCount = Identity n, fieldDescriptors = Identity fields} <- DBaseGen.header
-         DBaseFile h <$> Gen.bytes (Range.linear 0 100) <*> replicateM (fromIntegral n) (record fields)
+         padding <- Gen.bytes (Range.linear 0 100)
+         let paddingLength = fromIntegral (ByteString.length padding)
+         records <- replicateM (fromIntegral n) (record fields)
+         pure $ DBaseFile h{headerLength = h.headerLength + Identity paddingLength} padding records
 
 header :: Hedgehog.Gen (FileHeader Identity)
 header = fixHeaderLength . fixRecordLength <$> Rank2.traverse (Identity <$>) FileHeader{
