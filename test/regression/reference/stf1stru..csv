@@ -1,0 +1,68 @@
+FIELD_NAME,FIELD_TYPE,FIELD_LEN,FIELD_DEC,FIELD_TEXT
+FILEID,C,8,0,File Identification
+STUSAB,C,2,0,State/US Abbreviation
+SUMLEV,C,3,0,Summary Level
+GEOCOMP,C,2,0,Geographic Component
+CHARITER,C,3,0,Characteristic Iteration
+LOGRECNU,C,6,0,Logical Record Number
+LOGRECPN,C,4,0,Logical Record Part Number
+PARTREC,C,4,0,Total Number of Parts in Record
+ANRC,C,2,0,Alaska Native Regional Corporation
+AIANACE,C,4,0,American Indian/Alaska Native Area (Census)
+AIANAFP,C,5,0,American Indian/Alaska Native Area (FIPS)
+AIANACC,C,2,0,American Indian/Alaska Native Area Class Code
+ARTLI,C,1,0,American Indian Reservation Trust Land Indicator Code
+BLCK,C,4,0,Block
+BLCKGR,C,1,0,Block Group
+TRACTBNA,C,6,0,Census Tract/Block Numbering Area
+CONGDIS,C,2,0,Congressional District (101st Congress)
+CONCITCE,C,1,0,Consolidated City (Census)
+CONCITFP,C,5,0,Consolidated City (FIPS)
+CONCITCC,C,2,0,Consolidated City Class Code
+CONCITSC,C,2,0,Consolidated City Population Size Code
+CMSA,C,2,0,Consolidated Metropolitan Statistical Area
+CNTY,C,3,0,County
+CNTYSC,C,2,0,County Population Size Code
+COUSUBCE,C,3,0,County Subdivision (Census)
+COUSUBFP,C,5,0,County Subdivision (FIPS)
+COUSUBCC,C,2,0,County Subdivision Class Code
+COUSUBSC,C,2,0,County Subdivision Population Size Code
+DIVIS,C,1,0,Division
+EXTCITIN,C,1,0,Extended City Indicator
+INTUC,C,15,0,Internal Use Code
+MSACMSA,C,4,0,Metropolitan Statistical Area/Consol. Metro. Statist. Area
+MSACMSAS,C,2,0,MSA/CMSA Population Size Code
+PLACECE,C,4,0,Place (Census)
+PLACEFP,C,5,0,Place (FIPS)
+PLACECC,C,2,0,Place Class Code
+PLACEDC,C,1,0,Place Description Code
+PLACESC,C,2,0,Place Population Size Code
+PMSA,C,4,0,Primary Metropolitan Statistical Area
+REG,C,1,0,Region
+STATECE,C,2,0,State (Census)
+STATEFP,C,2,0,State (FIPS)
+URBANRUR,C,1,0,Urban/Rural
+URBAREA,C,4,0,Urbanized Area
+UASC,C,2,0,Urbanized Area Population Size Code
+SAC1,C,5,0,Special Area Code (1)
+SAC2,C,5,0,Special Area Code (2)
+SAC3,C,4,0,Special Area Code (3)-Voting District Code
+SAC4,C,4,0,Special Area Code (4)
+SAC5,C,3,0,Special Area Code (5)
+SAC6,C,3,0,Special Area Code (6)
+SAC7,C,2,0,Special Area Code (7)
+SAC8,C,2,0,Special Area Code (8)
+SAC9,C,1,0,Special Area Code (9)-Land/Water Area Code
+SAC10,C,1,0,Special Area Code (10)-Actual/Psuedo Voting District Code
+AREALAND,N,10,0,Area (land)
+AREAWAT,N,10,0,Area (water)
+ANPSADPI,C,66,0,Area Name/PSAD Term/Part Indicator
+FUNCSTAT,C,1,0,Functional Status Code
+GCUNI,C,1,0,Geographic Change User Note Indicator
+HU100,N,9,0,Housing Unit Count (100%)
+INTPTLAT,C,9,0,Internal Point (latitude)
+INTPTLNG,C,10,0,Internal Point (longitude)
+PARTFLAG,C,1,0,Part Flag
+PSADC,C,2,0,Political/Statistical Area Description Code
+POP100,N,9,0,Population Count (100%)
+SPFLAG,C,1,0,Special Flag
