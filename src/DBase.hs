@@ -7,7 +7,7 @@
 
 module DBase (
   -- * Parsing and serialization
-  DBase.parse, DBase.serialize,
+  DBase.serialize, DBase.parse, parseHeader,
   -- * Manipulation
   project, DBase.zipWithM,
   -- * Conversion from and to CSV
@@ -158,6 +158,13 @@ deriving instance Show (Record Identity)
 parse :: Lazy.ByteString -> Either String (DBaseFile Identity)
 parse input = fst <$> join (maybe (Left "success with no results") Right . listToMaybe . fst
                             <$> inspect (feedEof $ feed input $ Construct.parse file))
+
+-- | Parse the contents of a .dbf file, in case of failure return a @Left errorMessage@
+parseHeader :: Lazy.ByteString -> Either String (FileHeader Identity, ByteString, Lazy.ByteString)
+parseHeader input =
+  (\((h, p), r)-> (h, p, r))
+  <$> join (maybe (Left "success with no results") Right . listToMaybe . fst
+            <$> inspect (feed input $ Construct.parse fileHeaderWithPadding))
 
 -- | Serialize the structure of a .dbf file, in case of failure return a @Left errorMessage@
 serialize :: DBaseFile Identity -> Maybe Lazy.ByteString
@@ -350,11 +357,11 @@ csvField (LogicalValue (Just True)) = "t"
 -- | The root format of a .dbf file
 file :: Format (Parser Lazy.ByteString) Maybe Lazy.ByteString (DBaseFile Identity)
 file = mapValue (uncurry $ uncurry . DBaseFile) (header &&& postHeaderPadding &&& records) $
-  (deppair (mapSerialized Lazy.fromStrict Lazy.toStrict fileHeader) $
+  (deppair (serializedByteStringFromStrict fileHeader) $
    \h@FileHeader{headerLength = len, recordCount = Identity n, fieldDescriptors = Identity descriptors}->
      pair (mapValue Lazy.toStrict Lazy.fromStrict $ take
            $ fromIntegral len - maybe 0 ByteString.length (Construct.serialize fileHeader h)) $
-     (count (fromIntegral n) $ mapSerialized Lazy.fromStrict Lazy.toStrict $ tableRecord descriptors))
+     (count (fromIntegral n) $ serializedByteStringFromStrict $ tableRecord descriptors))
   <* ((literal (Lazy.singleton 0x1A) <?> "EOF marker")
       <|> literal mempty)
 --  <* eof
@@ -387,6 +394,11 @@ fileHeader = mfix $ \self-> record FileHeader{
     dataStart = word16le,
     totalSize = word16le,
     properties = take (fromIntegral $ totalSize $ fieldProperties self)}-}
+
+-- | The format of a .dbf file header and its padding, with lazy 'Lazy.ByteString' serialization
+fileHeaderWithPadding :: Format (Parser Lazy.ByteString) Maybe Lazy.ByteString (FileHeader Identity, ByteString)
+fileHeaderWithPadding = serializedByteStringFromStrict $ deppair fileHeader $ \h@FileHeader{headerLength = len}->
+  take $ fromIntegral len - maybe 0 ByteString.length (Construct.serialize fileHeader h)
 
 -- | Parse/decode a last-update date
 decodeDate :: ByteString -> Maybe Calendar.Day
@@ -474,9 +486,6 @@ fieldValue FieldDescriptor{fieldName = Identity name, fieldType = Identity t,
     <?> ("value of date field " <> ASCII.unpack name)
   where trimInsignificantZeros 0 = id
         trimInsignificantZeros _ = ASCII.dropWhileEnd (== '.') . ASCII.dropWhileEnd (== '0')
-        readMaybeInt bs = case ASCII.readWord bs of
-          Just (w, rest) | ASCII.null rest -> Just (fromIntegral w)
-          _ -> Nothing
 
 -- | Character padding required to extend a 'ByteString' to the desired length
 padding :: Int -> ByteString -> Char -> ByteString
