@@ -14,6 +14,8 @@ module DBase (
   csvHeader, csvRecords, headerFromCsv, recordFromCSV,
   -- * Types
   DBaseFile(..), FileHeader(..), Record(..), FieldDescriptor(..), FieldType(..), FieldValue(..),
+  -- * Formats
+  file, fileHeader, DBase.record,
   -- * Utility functions
   fixHeaderLength, fixRecordLength) where
 
@@ -361,14 +363,14 @@ file = mapValue (uncurry $ uncurry . DBaseFile) (header &&& postHeaderPadding &&
    \h@FileHeader{headerLength = len, recordCount = Identity n, fieldDescriptors = Identity descriptors}->
      pair (mapValue Lazy.toStrict Lazy.fromStrict $ take
            $ fromIntegral len - maybe 0 ByteString.length (Construct.serialize fileHeader h)) $
-     (count (fromIntegral n) $ serializedByteStringFromStrict $ tableRecord descriptors))
+     (count (fromIntegral n) $ serializedByteStringFromStrict $ DBase.record descriptors))
   <* ((literal (Lazy.singleton 0x1A) <?> "EOF marker")
       <|> literal mempty)
 --  <* eof
 
 -- | The format of a .dbf file header
 fileHeader :: Format (Parser ByteString) Maybe ByteString (FileHeader Identity)
-fileHeader = mfix $ \self-> record FileHeader{
+fileHeader = mfix $ \self-> Construct.record FileHeader{
   signature = satisfy (`elem` [0x2, 0x3, 0x4, 0x5]) byte,
   lastUpdate = mapMaybeValue decodeDate encodeDate $ take 3 <?> "last update",
   recordCount = cereal' getWord32le putWord32le,
@@ -415,7 +417,7 @@ encodeDate date
 
 -- | The format of a .dbf field descriptor
 fieldDescriptor :: Format (Parser ByteString) Maybe ByteString (FieldDescriptor Identity)
-fieldDescriptor = record FieldDescriptor{
+fieldDescriptor = Construct.record FieldDescriptor{
   fieldName = mapMaybeValue
                 (Just . ASCII.takeWhile (\c-> c /= '\0'))
                 (\name-> if ByteString.length name > 10 then Nothing else Just $ name <> padding 11 name '\0')
@@ -448,8 +450,8 @@ fieldDescriptor = record FieldDescriptor{
   mdxFieldFlag = byte}
   
 -- | The format of a single .dbf record
-tableRecord :: [FieldDescriptor Identity] -> Format (Parser ByteString) Maybe ByteString (Record Identity)
-tableRecord expected = record Record{
+record :: [FieldDescriptor Identity] -> Format (Parser ByteString) Maybe ByteString (Record Identity)
+record expected = Construct.record Record{
   deleted = True <$ value byte (fromIntegral $ Char.ord '*') <|> False <$ value byte (fromIntegral $ Char.ord ' '),
   fields = Construct.sequence (fieldValue <$> expected)}
 
