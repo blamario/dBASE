@@ -165,8 +165,11 @@ parse input = fst <$> join (maybe (Left "success with no results") Right . listT
 parseHeader :: Lazy.ByteString -> Either String (FileHeader Identity, ByteString, Lazy.ByteString)
 parseHeader input =
   (\((h, p), r)-> (h, p, r))
-  <$> join (maybe (Left "success with no results") Right . listToMaybe . fst
-            <$> inspect (feed input $ Construct.parse fileHeaderWithPadding))
+  <$> case inspect (feedEof $ feed prefix $ Construct.parse fileHeaderWithPadding)
+      of Right ([(result, rest)], _) -> Right (result, rest <> suffix)
+         Left err -> Left err
+         Right _ -> Left "ambiguous success"
+   where (prefix, suffix) = Lazy.splitAt 8192 input
 
 -- | Serialize the structure of a .dbf file, in case of failure return a @Left errorMessage@
 serialize :: DBaseFile Identity -> Maybe Lazy.ByteString

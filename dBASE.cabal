@@ -92,7 +92,7 @@ executable dbfhead
     build-depends:
         base >=4.18.0.0 && <4.20.0.0 || ^>=4.20.0.0,
         optparse-applicative >= 0.15 && < 0.19,
-        bytestring,
+        bytestring, incremental-parser ^>= 0.5, construct ^>=0.3,
         dBASE
 
     hs-source-dirs:   app
